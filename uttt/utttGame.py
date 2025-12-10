@@ -29,7 +29,7 @@ class utttGame(Game):
 
     def getBoardSize(self):
         # (a,b) tuple
-        return (9,10)
+        return (10, 9)
 
     def getActionSize(self):
         # return number of actions
@@ -64,23 +64,36 @@ class utttGame(Game):
     def getCanonicalForm(self, board, player):
         # return state if player==1, else return -state if player==-1
         return player*board
+    
+    def rotate_coord(self, r, c, k):
+        for _ in range(k % 4):
+            r, c = c, 8 - r
+        return r, c
 
     def getSymmetries(self, board, pi):
         # mirror, rotational
         #assert(len(pi) == 9*90)
         last_move = board[-1]
-        board = board[:-1]
+        board_body = board[:-1]
         pi_board = np.reshape(pi, (9,9))
         l = []
 
         for i in range(1, 5):
             for j in [True, False]:
-                newB = np.rot90(board, i)
+                newB = np.rot90(board_body, i)
                 newPi = np.rot90(pi_board, i)
+
+                r, c = int(last_move[0]), int(last_move[1])
+                r, c = self.rotate_coord(r, c, i)
+
                 if j:
                     newB = np.fliplr(newB)
                     newPi = np.fliplr(newPi)
-                l += [(newB+[last_move], list(newPi.ravel()))]
+
+                new_last = last_move.copy()
+                new_last[0], new_last[1] = r, c
+                full = np.vstack([newB, new_last])
+                l += [(full, list(newPi.ravel()))]
     
         return l
 
