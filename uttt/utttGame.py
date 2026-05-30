@@ -31,6 +31,9 @@ class utttGame(Game):
         # (a,b) tuple
         return (10, 9)
 
+    def getNNBoardSize(self):
+        return (9, 9)
+
     def getActionSize(self):
         # return number of actions
         return 9*9
@@ -77,25 +80,100 @@ class utttGame(Game):
         board_body = board[:-1]
         pi_board = np.reshape(pi, (9,9))
         l = []
+        last_group = abs(last_move[0])
+        last_cell = abs(last_move[1])
+        no_last_move = (last_group == 10 and last_cell == 10)
 
         for i in range(1, 5):
             for j in [True, False]:
                 newB = np.rot90(board_body, i)
                 newPi = np.rot90(pi_board, i)
-
-                r, c = int(last_move[0]), int(last_move[1])
-                r, c = self.rotate_coord(r, c, i)
+                new_last = last_move.copy()
+                if not no_last_move:
+                    r, c = int(last_group), int(last_cell)
+                    r, c = self.rotate_coord(r, c, i)
+                    if j:
+                        c = 8 - c
+                    new_last[0] = r if last_move[0] >= 0 else -r
+                    new_last[1] = c if last_move[1] >= 0 else -c
 
                 if j:
                     newB = np.fliplr(newB)
                     newPi = np.fliplr(newPi)
 
-                new_last = last_move.copy()
-                new_last[0], new_last[1] = r, c
                 full = np.vstack([newB, new_last])
                 l += [(full, list(newPi.ravel()))]
     
         return l
+    
+    def encodeBoard(self, board):
+        try:
+            import torch
+            is_torch = torch.is_tensor(board)
+        except Exception:
+            is_torch = False
+
+        if is_torch:
+            if board.dim() == 2:
+                board = board.unsqueeze(0)
+                squeeze = True
+            else:
+                squeeze = False
+
+            board_body = board[:, :9, :9].contiguous().view(board.size(0), 3, 3, 3, 3)
+            encoded = board_body.permute(0, 1, 3, 2, 4).contiguous().view(board.size(0), 9, 9)
+
+            x_plane = encoded.eq(1).to(board.dtype)
+            o_plane = encoded.eq(-1).to(board.dtype)
+            last_plane = torch.zeros_like(encoded)
+
+            last_group = torch.abs(board[:, 9, 0]).to(torch.long)
+            last_cell = torch.abs(board[:, 9, 1]).to(torch.long)
+            no_last_move = (last_group == 10) & (last_cell == 10)
+            invalid = ~no_last_move & ~((last_group >= 0) & (last_group < 9) & (last_cell >= 0) & (last_cell < 9))
+            if invalid.any().item():
+                raise ValueError("Invalid last move values detected: {}, {}".format(last_group, last_cell))
+
+            valid = ~no_last_move
+            if valid.any().item():
+                r = (last_group // 3) * 3 + (last_cell // 3)
+                c = (last_group % 3) * 3 + (last_cell % 3)
+                batch_idx = torch.arange(board.size(0), device=board.device)
+                last_plane[batch_idx[valid], r[valid], c[valid]] = 1
+
+            stacked = torch.stack([x_plane, o_plane, last_plane], dim=1)
+            return stacked[0] if squeeze else stacked
+
+        board = np.asarray(board)
+        if board.ndim == 2:
+            board = board[None, ...]
+            squeeze = True
+        else:
+            squeeze = False
+
+        board_body = board[:, :9, :9].reshape(board.shape[0], 3, 3, 3, 3)
+        encoded = board_body.transpose(0, 1, 3, 2, 4).reshape(board.shape[0], 9, 9)
+
+        x_plane = (encoded == 1).astype(board_body.dtype)
+        o_plane = (encoded == -1).astype(board_body.dtype)
+        last_plane = np.zeros_like(encoded)
+
+        last_group = np.abs(board[:, 9, 0]).astype(int)
+        last_cell = np.abs(board[:, 9, 1]).astype(int)
+        no_last_move = (last_group == 10) & (last_cell == 10)
+        invalid = ~no_last_move & ~((last_group >= 0) & (last_group < 9) & (last_cell >= 0) & (last_cell < 9))
+        if np.any(invalid):
+            raise ValueError("Invalid last move values detected: {}".format(invalid.astype(int).sum()))
+
+        valid = ~no_last_move
+        if np.any(valid):
+            r = (last_group // 3) * 3 + (last_cell // 3)
+            c = (last_group % 3) * 3 + (last_cell % 3)
+            batch_idx = np.arange(board.shape[0])
+            last_plane[batch_idx[valid], r[valid], c[valid]] = 1
+
+        stacked = np.stack([x_plane, o_plane, last_plane], axis=1)
+        return stacked[0] if squeeze else stacked
 
     def stringRepresentation(self, board):
         return ''.join(map(str, board))
